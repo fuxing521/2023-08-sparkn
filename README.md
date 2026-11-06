@@ -1,279 +1,278 @@
-# Sparkn
+# Sparkn — Smart Contract Security Research
 
-## Contest Details 
+**Historical Audit Reproduction | Solidity · EVM · Foundry**
 
-- Total Prize Pool: $15,000
-  - HM Awards: $14,000
-  - Low Awards: $1,000
-  - No GAS, Informational, or QAs
-
-- Starts August 21, 2023
-- Ends August 28th, 2023
-
-## Stats
-- nSLOC: ~194
-- Complexity Score: ~213
-- Dollars per Complexity: ~$70
-
-[//]: # (contest-details-open)
-
-# About the Project
-
-- [Landing Page](https://sparkn.io/)
-- [CodeFox Twitter](https://twitter.com/CodeFoxInc)
-- [Sparkn Twitter](https://twitter.com/sparkn_io)
-
-## Sparkn
-
-### Incentive
-
-Nowadays information is spread around the world in an incredible speed. However, in some isolated areas the information gaps are too substantial to overcome the challenges. One of the biggest challenges we noticed so far is: neither there are talented people nor incentives to create great ideas in some of these areas.
-
-We found that there are many problems can be solved by the community in a more innovative and open way if things are done openly and smartly with adequate incentives.
-
-Since its inception, Web3, or we can all it "blockchain industry", has been thriving, thanks in part to its inherent incentive structure. We believe that the underlying philosophy and values of Web3 can be applied more widely to address various problems.
-
-Our belief is that the more problems we can solve using this technology, the more value we can generate. This, in turn, will allow more people to reap the benefits of Web3 and blockchain. Ultimately, this could lead to the widespread adoption of Web3, allowing it to become a mainstream technology
-
-Because of this, we have created **SPARKN**.
-
-### What is SPARKN
-
-SPARKN protocol is a Web3 project that aspires to create a marketplace for anyone looking to find solutions to their problems or eager to assist others in solving theirs.
-
-As an initial step, we've developed the protocol without any limitations. The manner in which the protocol is used is entirely at the discretion of the users, allowing them to adapt it to their unique needs and preferences.
-
-[//]: # (contest-details-close)
-
-[//]: # (scope-open)
+Independent smart contract security research based on the publicly disclosed 2023 Sparkn audit contest.
 
-## Scope
+**Language:** English | [简体中文](./README-CN.md)
 
--   src/
-    -   ProxyFactory.sol
-    -   Distributor.sol
-    -   Proxy.sol
+---
 
-## Out of Scope
+## 1. Overview
 
-Any file except for the files in the above Scope.
+This repository documents an independent, local reproduction and technical analysis of selected security findings from the historical **Sparkn** smart contract audit contest.
 
-## Sequence Diagram of the Protocol
+Sparkn uses deterministic CREATE2 Proxy deployments to manage contest prize distributions. Prize tokens can be transferred to a predicted Proxy address before deployment. A Proxy subsequently delegates execution to a Distributor implementation, which distributes ERC20 rewards to winners and pays the remaining commission to a designated Stadium address.
 
-This sequence diagram shows how the protocol works considering the process of the contest with the roles in the protocol.
+The research focuses on:
 
-```mermaid
-sequenceDiagram
-    actor 1 as Owner
-    actor S as Sponsor
-    actor O as Organizer
-    participant PF as ProxyFactory
-    participant P as Proxy
-    participant D as Distributior
-    actor W as Winners
-    actor RT as rescue requestor
-    Note over 1,W: Contest Preparation Phase
-    activate PF
-    activate D
-    1->>PF: setContest()
-    PF-->>S: getProxyAddress()
-    S->>P: send erc20 token
-    PF-->>O: getProxyAddress()
-    O->>P: send erc20 token
-    Note over PF,D: Wait for contest to reach close time
-    Note over 1,W: Distribution Phase
-    rect rgba(0, 255, 0, 0.1)
-        alt Pattern 1: Distribute by organizer
-        Note over O: When organizer is active to end the contest
-            O->>PF: deployProxyAndDistribute()
-    else Pattern 2: Distribute by signature
-    Note over O: When organizer is active and wants to use meta tx
-        O ->> 1: send signature
-        1->>PF: deployProxyAndDistributeBySignature()
-        note over PF: signature validation is OK
-    else Pattern 3: Distribute by owner
-    Note over 1,W: Contest Expiration Phase
-        Note over O: When organizer is not active
-        Note over PF, D: And if contest is expired
-        1->>PF: deployProxyAndDistributeByOwner()
-    end
-    end
-    PF->>P: deploy proxy and calls distribute()
-    activate P
-    P->>D: delegatecall distribute()
-    P-xW: distribute erc20 token as prizes
-    P-->>PF: Proxy address
-    PF-->>O: Proxy address
-    deactivate P
-    rect rgba(0, 0, 255, 0.1)
-        opt
-            activate P
-            Note over 1,W: Contest Expiration Phase
-            Note over P: Proxy is deployed and token is distributed
-            Note over P: If whitelisted tokens are sent by mistake
-            1->>PF: distributeByOwner()
-            PF->>P: deploy proxy and calls distribute
-            P->>D: delegatecall distribute()
-            P-xRT: rescue erc20 token, send to rescue requestor
-        end
-    end
-    deactivate PF
-    deactivate P
-    deactivate D
-    Note over 1,W: Contest ends here
+- Signature authorization and ECDSA verification.
+- EIP-712 structured-data encoding.
+- Proxy execution and `delegatecall`.
+- CREATE2 address prediction and pre-funding.
+- ERC20 reward distribution and accounting.
+- Transaction rollback and denial-of-service conditions.
+- Reproducible vulnerability testing with Foundry.
 
-```
+**Research output:**
 
-## Contracts
+- 3 historical security findings reproduced and analyzed.
+- 3 English findings and 3 Chinese findings.
+- 3 dedicated vulnerability PoC test files.
+- 1 additional CREATE2 pre-funding research test.
+- 8 passing tests across four individually executed Foundry test suites.
 
-The contracts in this repository are used as escrows for SPARKN users' assets on-chain.
-Our goal is to make sure assets on SPARKN are safe and transparent, no matter who is using it.
+All demonstrations use local test accounts and simulated assets.
 
-These contracts are responsible for the escrowing of users' funds and distributing them to the winners of the contests. We tried to keep things simple and safe.
+## 2. Security Findings
 
-All the contracts are sitting in the `src/` folder. These are the core contracts of the protocol.
+The severity labels below refer to the **historical contest classifications**, not newly assigned ratings.
 
-The contracts are supposed to be deployed to any EVM-compatible chains.
+### H-01 — Cross-Implementation Signature Reuse
 
-## Roles
+**Severity:** High (Historical Rating)
 
-There are mainly 3 roles in the protocol. Another role is the owner.
+**Affected Contract:** `src/ProxyFactory.sol`
 
--   Organizer: The person who creates the contest and he is responsible for distributing the prizes to the winners. We also sometimes call this role "innovator".
--   Sponsor: the person who is willing to fund the contest. Sponsor can be anyone include the organizer.
--   Supporter: the person who is willing to help solve the problem. Winners are selected from the supporters.
--   Owner: The administrator of the protocol.
+**Root Cause:** The Organizer's signed digest does not bind the `implementation` address, although that address is part of the contest's CREATE2 deployment identity.
 
-The graph below shows the structure of the contracts and their relationships in the protocol.
+**Verified Behavior:** A single valid Organizer signature successfully authorizes distributions through two different registered Distributor implementations.
 
-![contracts structure](https://res.cloudinary.com/droqoz7lg/image/upload/v1692174387/contractsStructure_atnqmw.png)
+**Evidence:** Two local Foundry tests passed.
 
-### More Context
+**Reports and PoC:**
 
--   The contracts is created with the philosophy of "supporter first".
+- [Foundry PoC](./test/F01SignatureScope.t.sol)
+- [English Finding](./findings/H01-Signature-Reuse-Across-Implementations.md)
+- [中文 Finding](./findings/H01-Signature-Reuse-Across-Implementations-CN.md)
 
-If a contest is created and funded, there is no way to refund. All the funds belong to the persons who wants to help solve the problem, we call them "supporters". And there is a certain assets-locking period of time in which no one except the organizer can call and distribute the funds to the winners.
+### M-01 — Non-Standard EIP-712 Digest Calculation
 
--   SPARKN protocol consists of both web2 and Web3, and the system can be upgraded in the future. Because the structure of the contracts are simple and straightforward, and at the same time, all contests have their own life cycle, it is easy to upgrade the system in the future. Once a contest's life cycle ends, we can decide to introduce new contests with any necessary upgrades from that point on.
+**Severity:** Medium (Historical Rating)
 
-#### `ProxyFactory.sol`
+**Affected Contract:** `src/ProxyFactory.sol`
 
-This is the main entry point of the protocol.
+**Root Cause:** The implementation computes its message hash without the EIP-712 structure type hash and the required hashing of the dynamic `bytes` field.
 
-It has several functions.
+**Verified Behavior:** The original Sparkn digest differs from the digest calculated using the selected standards-compliant EIP-712 schema. A signature generated from the standard digest is rejected by the original Factory.
 
--   The owner can use it to set new contests.
--   The organizer can use it to deploy proxy and distribute prizes to winners.
--   The organizer can use meta transaction to send signature to someone else to deploy proxy and distribute prizes to winners.
--   The owner can deploy proxy and distribute prizes to winners if organizer did not call the function in time.
--   The owner can distribute the tokens stuck in the proxy after the proxy's expiration.
--   Anyone can call `getProxyAddress()` to get the address of the proxy even before its deployment.
--   It contains a whitelist.
+**Evidence:** Two local Foundry tests passed.
 
-This contract inherits the `Ownable` contract from OpenZeppelin for access control. And it inherits the `EIP712` contract from OpenZeppelin for meta transaction. `_hashTypedDataV4` is used for function `deployProxyAndDistributeBySignature()`.
+**Reports and PoC:**
 
-#### `Distributor.sol`
+- [Foundry PoC](./test/M01EIP712Digest.t.sol)
+- [English Finding](./findings/M01-Nonstandard-EIP712-Digest.md)
+- [中文 Finding](./findings/M01-Nonstandard-EIP712-Digest-CN.md)
 
-This is a contract used as the logic contract of the proxy. It will not be used as a single contract, but it will be called through proxy as delegate calls.
+### M-02 — Stadium Blacklist Blocks Prize Distribution
 
-Its functions are as follows:
+**Severity:** Medium (Historical Rating)
 
--   Only the proxy factory can call the `distribute` function to distribute prizes to winners.
--   During the distribution of prizes, a certain portion of the token in the proxy contract will be sent to the stadium address as fee.
--   During the calls, it will check the whitelist in the factory contract.
+**Affected Contract:** `src/Distributor.sol`
 
-#### `Proxy.sol`
+**Root Cause:** Winner payouts depend on a mandatory commission transfer to the fixed Stadium address.
 
-This is a proxy contract. It will be deployed by the factory contract. This contract is paired with every single contest in the protocol.
+**Verified Behavior:** A mock ERC20 restriction on the Stadium recipient causes the distribution to revert, rolling back previous winner transfers.
 
--   It is designed with minimal logic in it.
--   All the calls to proxy contract will be delegated to the implementation(distributor) contract.
+**Evidence:** Two local Foundry unit tests passed.
 
-## Tests
+**Scope Limitation:** This PoC directly tests Distributor logic and does not execute the complete Proxy deployment path.
 
-Tests are in the `test/` folder. More explanations about test cases can be found in the test folder's [`README.md`](https://github.com/codefox-inc/sparkn-contracts/tree/main/test) file.
+**Reports and PoC:**
 
-[//]: # (scope-close)
+- [Foundry PoC](./test/M02StadiumBlacklist.t.sol)
+- [English Finding](./findings/M02-Stadium-Blacklist-Blocks-Distribution.md)
+- [中文 Finding](./findings/M02-Stadium-Blacklist-Blocks-Distribution-CN.md)
 
-[//]: # (known-issues-open)
+---
 
-## Known Issues
+## 3. Additional Security Research
 
-These are known issues or designed by purpose.
+### CREATE2 Pre-Funding Address Mismatch
 
--   There is a way to rescue the token stuck in the proxy contract after the deployment and distribution of prizes only when the token is whitelisted. If the token is not whitelisted, and then if someone sent the token by mistake, the token will be stuck there forever.
--   Proxy contracts are designed to be deployed and distribute the prizes to winners simultaneously. Before the deployment, sponsors are supposed to send the whitelisted ERC20 token to the anticipated/calculated proxy contract address. The proxy address can be calculated by the function `getProxyAddress()`.
--   Proxy contracts are supposed to be disposed after the contest is over. If there is a need to upgrade the protocol, we will just create a new implementation contract and deploy proxies with the new implementation contract. And so is the factory contract.
--   Owner is in charge of some of the key functions of the protocol. Owner's centralization risk is not an issue to be considered this time.
--   We may build a reputation system in the futue to handle the issue of the system being maliciously used, e.g., sybil attack.
+**Category:** Supplemental Security Research — Not a Confirmed Protocol Vulnerability
 
-See [here for more known issues](https://github.com/Cyfrin/2023-08-sparkn/issues/1) generated by the 4nalyz3r tool.
+Sparkn allows sponsors to pre-fund deterministic Proxy addresses before contract deployment.
 
-## Notes
+This study compares two scenarios:
 
--   We have designed the protocol by using a lot of immutable variables. So it is supposed that there is no state variable collision in the system. If you find any issue, please report.
--   The reason we chosse to use the proxy and implementation pattern is because this can reduce a lot of gas with only deploying the proxy contract with minimal size for each contest.
--   Unfortunately, the current condition of Web3's scalibility is not able to support total on-chain application. That is why we created a more versatile version of it using a hybrid solution of web2 and Web3. We will try to make it more and more decentralized after we onborad more users and the condition of Web3 improves.
+1. Tokens are transferred to an incorrect predicted address, leaving the actual registered Proxy without the intended funds.
+2. Tokens are transferred to the correct predicted address, allowing the Factory to deploy the Proxy and distribute rewards.
 
-[//]: # (known-issues-close)
+**Verified Behavior:** The wrong-address scenario fails to distribute the misplaced tokens, while the correctly funded deployment succeeds.
 
-[//]: # (getting-started-open)
+**Evidence:** Two local Foundry tests passed.
 
-## Getting Started
+This test illustrates address prediction and pre-funding risks. It does not independently establish a protocol-level vulnerability or permanent fund loss.
 
-1. Install dependencies
+**Test:** [CREATE2PrefundAddressMismatch.t.sol](./test/CREATE2PrefundAddressMismatch.t.sol)
+
+---
+
+## 4. Testing and Reproduction
+
+### Requirements
+
+- Foundry (`forge`)
+- Solidity compiler compatible with `0.8.18`
+- Project dependencies, including `forge-std` and OpenZeppelin Contracts
+
+Run commands from the project root directory.
+
+### H-01: Signature Reuse
 
 ```bash
-forge install
+forge test --match-contract F01SignatureScopeTest -vv
 ```
 
-2. Run tests
+**Observed result:** 2 passed, 0 failed.
+
+### M-01: EIP-712 Digest Compatibility
+
+```bash
+forge test --match-contract M01EIP712DigestTest -vv
+```
+
+**Observed result:** 2 passed, 0 failed.
+
+### M-02: Stadium Blacklist
+
+```bash
+forge test --match-contract M02StadiumBlacklistTest -vv
+```
+
+**Observed result:** 2 passed, 0 failed.
+
+### Additional CREATE2 Research
+
+```bash
+forge test --match-contract CREATE2PrefundAddressMismatchTest -vv
+```
+
+**Observed result:** 2 passed, 0 failed.
+
+### Complete Project Test Suite
 
 ```bash
 forge test
 ```
 
-run a single test
+This command runs the broader project test suite. The eight passing results above were observed from the four individually executed research test suites; they should not be interpreted as verification that every original repository test passes.
+
+For detailed call traces:
 
 ```bash
-forge test --mt <test_function_name>
+forge test --match-contract F01SignatureScopeTest -vvvv
 ```
 
-run fuzz test
+---
 
-```bash
-forge test --match-contract FuzzTestProxyFactory
+## 5. Research Scope and Technical Skills
+
+### Solidity and EVM
+
+- Solidity contract analysis
+- Contract calls and `delegatecall`
+- Proxy execution context
+- EVM transaction atomicity
+- ABI encoding and function selectors
+
+### Cryptographic Authorization
+
+- ECDSA signing and signature recovery
+- EIP-712 domain separation
+- Structured-data hashing
+- Authorization scope analysis
+- Cross-implementation signature reuse
+
+### Smart Contract Testing
+
+- Foundry unit and integration-style testing
+- `vm.sign()`, `vm.prank()`, and `vm.warp()`
+- Expected revert testing
+- Mock ERC20 tokens
+- State and balance assertions
+- Reproducible proof-of-concept design
+
+### Protocol Analysis
+
+- CREATE2 address derivation
+- Pre-deployment funding
+- ERC20 reward distribution
+- Fee accounting
+- Trust boundaries and business-logic assumptions
+
+---
+
+## 6. Repository Structure
+
+```text
+2023-08-sparkn/
+├── src/
+│   ├── ProxyFactory.sol
+│   ├── Proxy.sol
+│   └── Distributor.sol
+│
+├── test/
+│   ├── F01SignatureScope.t.sol
+│   ├── M01EIP712Digest.t.sol
+│   ├── M02StadiumBlacklist.t.sol
+│   ├── CREATE2PrefundAddressMismatch.t.sol
+│   └── ...
+│
+├── findings/
+│   ├── H01-Signature-Reuse-Across-Implementations.md
+│   ├── H01-Signature-Reuse-Across-Implementations-CN.md
+│   ├── M01-Nonstandard-EIP712-Digest.md
+│   ├── M01-Nonstandard-EIP712-Digest-CN.md
+│   ├── M02-Stadium-Blacklist-Blocks-Distribution.md
+│   └── M02-Stadium-Blacklist-Blocks-Distribution-CN.md
+│
+├── README.md
+├── README-CN.md
+└── foundry.toml
 ```
 
-see test coverage
+The original project files and testing infrastructure are retained where applicable.
 
-```bash
-forge coverage
-```
+---
 
-3. Deploy contracts
+## 7. Attribution and Research Disclosure
 
-```bash
-forge deploy --network <network>
-```
+This project is an independent educational and technical reproduction of previously disclosed security findings from the **2023 Sparkn audit contest**.
 
-or deploy to local network
+The historical vulnerabilities were not originally discovered by the author of this research repository.
 
-```bash
-make deploy
-```
+The original Sparkn contracts and project materials remain attributable to their respective creators.
 
-4. Other things to do
+The research findings document local verification results, observed behavior, testing limitations, and proposed mitigations.
 
-Format the codes
+No unauthorized interaction with deployed protocols or real assets was performed.
 
-```bash
-make format
-```
+A passing PoC demonstrates the behavior asserted by that test. It does not automatically establish every potential exploit scenario or prove that the original contracts have been fixed.
 
-# Reference
+**Remediation Status:** The historical business contracts were not patched as part of these reproductions, and post-fix regression testing has not been performed.
 
--   [Foundry Book](https://book.getfoundry.sh/)
--   [OpenZeppelin](https://docs.openzeppelin.com/contracts/4.x/)
+---
 
-[//]: # (getting-started-close)
+## 8. Original Project Documentation and References
+
+- [Original Sparkn Repository](https://github.com/Cyfrin/2023-08-sparkn)
+- [CodeHawks — Sparkn Historical Audit Report](https://www.codehawks.com/report/cllcnja1h0001lc08z7w0orxx)
+- [Original Test Documentation](./test/README.md)
+- [EIP-712 Specification](https://eips.ethereum.org/EIPS/eip-712)
+- [Foundry Documentation](https://book.getfoundry.sh/)
+
+---
+
+**中文版：** [README-CN.md](./README-CN.md)
